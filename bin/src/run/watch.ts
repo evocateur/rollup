@@ -6,7 +6,7 @@ import ms from 'pretty-ms';
 import onExit from 'signal-exit';
 import dateTime from 'date-time';
 import mergeOptions from '../../../src/utils/mergeOptions.js';
-import batchWarnings from './batchWarnings.js';
+import batchWarnings, { BatchWarnings } from './batchWarnings.js';
 import alternateScreen from './alternateScreen.js';
 import loadConfigFile from './loadConfigFile.js';
 import relativeId from '../../../src/utils/relativeId.js';
@@ -29,42 +29,40 @@ interface Watcher {
 
 export default function watch (configFile: string, configs: RollupWatchOptions[], command: any, silent = false) {
 	const isTTY = Boolean(process.stderr.isTTY);
+	const warnings: BatchWarnings = batchWarnings();
 
-	const screen = alternateScreen(isTTY);
+	const initialConfigs = processConfigs(configs);
+	const clearScreen: boolean = initialConfigs.every(cfg => cfg.watch.clearScreen !== false);
+
+	const screen = alternateScreen(isTTY, clearScreen);
 	screen.open();
-
-	const warnings = batchWarnings();
 
 	let watcher: Watcher;
 	let configWatcher: Watcher;
 
-	function start (configs: RollupWatchOptions[]) {
-		screen.reset(chalk.underline(`rollup v${rollup.VERSION}`));
-
-		let screenWriter = screen.reset;
-		configs = configs.map(options => {
-			const merged = mergeOptions({ config: options, command, defaultOnWarnHandler: warnings.add });
+	function processConfigs (rawConfigs: RollupWatchOptions[]): RollupWatchOptions[] {
+		return rawConfigs.map(rawConfig => {
+			const merged = mergeOptions({ config: rawConfig, command, defaultOnWarnHandler: warnings.add });
 
 			const result: RollupWatchOptions = Object.assign({}, merged.inputOptions, {
 				output: merged.outputOptions
 			});
 
-			if (merged.deprecations.length) {
-				if (!result.watch) result.watch = {};
-				(<{ _deprecations: any }>result.watch)._deprecations = merged.deprecations;
-			}
+			// already watching, just making it consistent for clearScreen every() predicate
+			if (!result.watch) result.watch = {};
 
-			if (
-				(<RollupWatchOptions>merged.inputOptions).watch &&
-				(<RollupWatchOptions>merged.inputOptions).watch.clearScreen === false
-			) {
-				screenWriter = stderr;
+			if (merged.deprecations.length) {
+				(<{ _deprecations: any }>result.watch)._deprecations = merged.deprecations;
 			}
 
 			return result;
 		});
+	}
 
-		watcher = rollup.watch(configs);
+	function start (watcherConfigs: RollupWatchOptions[]) {
+		screen.reset(chalk.underline(`rollup v${rollup.VERSION}`));
+
+		watcher = rollup.watch(watcherConfigs);
 
 		watcher.on('event', (event: WatchEvent) => {
 			switch (event.code) {
@@ -80,7 +78,7 @@ export default function watch (configFile: string, configs: RollupWatchOptions[]
 					break;
 
 				case 'START':
-					screenWriter(chalk.underline(`rollup v${rollup.VERSION}`));
+					screen.reset(chalk.underline(`rollup v${rollup.VERSION}`));
 					break;
 
 				case 'BUNDLE_START':
@@ -136,7 +134,7 @@ export default function watch (configFile: string, configs: RollupWatchOptions[]
 		if (configWatcher) configWatcher.close();
 	}
 
-	start(configs);
+	start(initialConfigs);
 
 	if (configFile && !configFile.startsWith('node:')) {
 		let restarting = false;
@@ -156,7 +154,7 @@ export default function watch (configFile: string, configs: RollupWatchOptions[]
 			restarting = true;
 
 			loadConfigFile(configFile, silent)
-				.then((configs: RollupWatchOptions[]) => {
+				.then((loadedConfigs: RollupWatchOptions[]) => {
 					restarting = false;
 
 					if (aborted) {
@@ -164,7 +162,7 @@ export default function watch (configFile: string, configs: RollupWatchOptions[]
 						restart();
 					} else {
 						watcher.close();
-						start(configs);
+						start(processConfigs(loadedConfigs));
 					}
 				})
 				.catch((err: Error) => {

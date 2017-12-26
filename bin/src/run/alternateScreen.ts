@@ -6,7 +6,7 @@ import { stderr } from '../logging.js';
 const SHOW_ALTERNATE_SCREEN = '\u001B[?1049h';
 const HIDE_ALTERNATE_SCREEN = '\u001B[?1049l';
 
-export default function alternateScreen (enabled: boolean) {
+export default function alternateScreen (enabled: boolean, clearScreen: boolean) {
 	if (!enabled) {
 		let needAnnounce = true;
 		return {
@@ -21,6 +21,8 @@ export default function alternateScreen (enabled: boolean) {
 		};
 	}
 
+	const resetPrefix = clearScreen ? `${ansiEscape.eraseScreen}${ansiEscape.cursorTo(0, 0)}` : '';
+
 	return {
 		open () {
 			process.stderr.write(SHOW_ALTERNATE_SCREEN);
@@ -29,7 +31,7 @@ export default function alternateScreen (enabled: boolean) {
 			process.stderr.write(HIDE_ALTERNATE_SCREEN);
 		},
 		reset (heading: string) {
-			stderr(`${ansiEscape.eraseScreen}${ansiEscape.cursorTo(0, 0)}${heading}`);
+			stderr(`${resetPrefix}${heading}`);
 		}
 	};
 }
